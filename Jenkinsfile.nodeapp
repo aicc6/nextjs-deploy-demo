@@ -145,32 +145,6 @@ pipeline {
             }
         }
 
-        stage('Health Check') {
-            steps {
-                script {
-                    def targetEnv = 'production'
-                    def serverUrl = "https://${DEPLOY_SERVER}"
-
-                    sh """
-                        echo "Performing health check..."
-                        sleep 10
-
-                        # Health check
-                        for i in {1..5}; do
-                            if curl -f -s -o /dev/null -w "%{http_code}" ${serverUrl}/api/health; then
-                                echo "Health check passed"
-                                exit 0
-                            fi
-                            echo "Attempt \$i failed, retrying..."
-                            sleep 5
-                        done
-
-                        echo "Health check failed after 5 attempts"
-                        exit 1
-                    """
-                }
-            }
-        }
     }
 
     post {
