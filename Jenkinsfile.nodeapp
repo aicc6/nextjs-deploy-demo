@@ -12,8 +12,7 @@ pipeline {
 
     environment {
         // Jenkins Credentials에서 관리할 환경 변수들
-        // Build 시에는 development로 설정, 배포 시에만 production 사용
-        NODE_ENV = 'development'
+        NODE_ENV = 'production'
 
         // 배포 서버 정보
         DEPLOY_SERVER = credentials('deploy-server-host')
@@ -40,10 +39,13 @@ pipeline {
                         echo "NPM version: $(npm -v)"
                         echo "Current NODE_ENV: $NODE_ENV"
                         
-                        # Ensure we install all dependencies including devDependencies
-                        # Temporarily unset NODE_ENV to avoid production mode
-                        unset NODE_ENV
-                        npm ci --no-audit
+                        # Clean previous installations
+                        echo "Cleaning previous installations..."
+                        rm -rf node_modules .next package-lock.json
+                        
+                        # Fresh install all dependencies
+                        echo "Installing dependencies..."
+                        npm install --no-audit
                         
                         # Verify TypeScript installation
                         echo "Checking TypeScript installation..."
@@ -84,7 +86,12 @@ pipeline {
                 script {
                     sh '''
                         echo "Building Next.js application..."
-                        npm run build
+                        # Clean any previous build artifacts
+                        rm -rf .next
+                        
+                        # Build the application
+                        NODE_ENV=production npm run build
+                        
                         echo "Build completed successfully"
                     '''
                 }
