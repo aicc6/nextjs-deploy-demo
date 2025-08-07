@@ -217,6 +217,17 @@ def deployToServer(String environment) {
                 ssh \${DEPLOY_USER}@\${DEPLOY_SERVER} << 'ENDSSH'
                 set -e
 
+                # NVM 환경 설정 로드
+                export NVM_DIR="\$HOME/.nvm"
+                [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
+                [ -s "\$NVM_DIR/bash_completion" ] && . "\$NVM_DIR/bash_completion"
+                
+                # Node.js 버전 확인 및 사용
+                nvm use default || nvm use node || nvm use stable
+                
+                echo "Node version: \$(node -v)"
+                echo "NPM version: \$(npm -v)"
+
                 cd ${deployPath}/releases/${BUILD_NUMBER}
 
                 # 압축 해제
@@ -247,7 +258,14 @@ EOF
 
                 # PM2로 애플리케이션 재시작
                 cd ${deployPath}/current
-                pm2 reload ecosystem.config.js --env ${environment}
+                
+                # PM2가 설치되어 있는지 확인
+                if ! command -v pm2 &> /dev/null; then
+                    echo "PM2 not found, installing globally..."
+                    npm install -g pm2
+                fi
+                
+                pm2 reload ecosystem.config.js --env ${environment} || pm2 start ecosystem.config.js --env ${environment}
 
                 # 오래된 릴리즈 정리 (최근 5개만 유지)
                 cd ${deployPath}/releases
