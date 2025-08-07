@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    triggers {
+        githubPush()
+    }
+
     tools {
         // Jenkins에서 설정한 Node.js 버전
         nodejs 'node-v22.18.0'
