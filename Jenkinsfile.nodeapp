@@ -1,0 +1,223 @@
+pipeline {
+    agent any
+
+    tools {
+        // Jenkins에서 설정한 Node.js 버전
+        nodejs 'node-v22.18.0'
+    }
+
+    environment {
+        // Jenkins Credentials에서 관리할 환경 변수들
+        NODE_ENV = credentials('node-env')
+
+        // 배포 서버 정보
+        DEPLOY_SERVER = credentials('deploy-server-host')
+        DEPLOY_USER = credentials('deploy-server-user')
+        DEPLOY_PATH = '/var/www/nextjs-deploy-demo'
+        APP_NAME = 'nextjs-deploy-demo'
+        APP_PORT = '9000'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                echo "Branch: ${env.GIT_BRANCH}"
+                echo "Commit: ${env.GIT_COMMIT}"
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                script {
+                    sh '''
+                        echo "Node version: $(node -v)"
+                        echo "NPM version: $(npm -v)"
+                        npm ci --prefer-offline --no-audit
+                    '''
+                }
+            }
+        }
+
+        stage('Code Quality') {
+            parallel {
+                stage('Lint') {
+                    steps {
+                        sh 'npm run lint'
+                    }
+                }
+                stage('Type Check') {
+                    steps {
+                        sh 'npx tsc --noEmit'
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                script {
+                    sh '''
+                        echo "Building Next.js application..."
+                        npm run build
+                        echo "Build completed successfully"
+                    '''
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                script {
+                    sh '''
+                        echo "Running tests..."
+                        # npm test 명령이 있다면 실행
+                        # npm test
+                        echo "Tests completed"
+                    '''
+                }
+            }
+        }
+
+        stage('Prepare Deployment') {
+            steps {
+                script {
+                    // 배포 패키지 준비
+                    sh '''
+                        echo "Preparing deployment package..."
+
+                        # 배포에 필요한 파일만 포함
+                        tar -czf ${APP_NAME}.tar.gz \
+                            .next \
+                            public \
+                            package.json \
+                            package-lock.json \
+                            ecosystem.config.js \
+                            .env.production.template \
+                            scripts/
+
+                        echo "Deployment package created"
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Production') {
+            when {
+                branch 'main'
+            }
+            input {
+                message "Deploy to production?"
+                ok "Yes, deploy to production"
+            }
+            steps {
+                script {
+                    deployToServer('production')
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                script {
+                    def targetEnv = 'production'
+                    def serverUrl = "https://${DEPLOY_SERVER}"
+
+                    sh """
+                        echo "Performing health check..."
+                        sleep 10
+
+                        # Health check
+                        for i in {1..5}; do
+                            if curl -f -s -o /dev/null -w "%{http_code}" ${serverUrl}/api/health; then
+                                echo "Health check passed"
+                                exit 0
+                            fi
+                            echo "Attempt \$i failed, retrying..."
+                            sleep 5
+                        done
+
+                        echo "Health check failed after 5 attempts"
+                        exit 1
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+            // Slack 또는 이메일 알림
+            // slackSend(color: 'good', message: "Deployment successful: ${env.JOB_NAME} - ${env.BUILD_NUMBER}")
+        }
+        failure {
+            echo 'Pipeline failed!'
+            // Slack 또는 이메일 알림
+            // slackSend(color: 'danger', message: "Deployment failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}")
+        }
+        cleanup {
+            cleanWs()
+        }
+    }
+}
+
+def deployToServer(String environment) {
+    def deployServer = "${DEPLOY_SERVER}"
+    def deployPath = "${DEPLOY_PATH}"
+
+    sshagent(credentials: ['aicc']) {
+        sh """
+            echo "Deploying to ${environment} server..."
+
+            # 배포 디렉토리 생성
+            ssh ${DEPLOY_USER}@${deployServer} "mkdir -p ${deployPath}/releases/${BUILD_NUMBER}"
+
+            # 파일 전송
+            scp ${APP_NAME}.tar.gz ${DEPLOY_USER}@${deployServer}:${deployPath}/releases/${BUILD_NUMBER}/
+
+            # 원격 서버에서 배포 스크립트 실행
+            ssh ${DEPLOY_USER}@${deployServer} << 'ENDSSH'
+                set -e
+
+                cd ${deployPath}/releases/${BUILD_NUMBER}
+
+                # 압축 해제
+                tar -xzf ${APP_NAME}.tar.gz
+                rm ${APP_NAME}.tar.gz
+
+                # 환경 변수 파일 생성 (Jenkins 크레덴셜 활용)
+                cat > .env.production << EOF
+NODE_ENV=${NODE_ENV}
+EOF
+
+                echo "Environment variables configured:"
+                echo "-----------------------------------"
+                echo "NODE_ENV=${NODE_ENV}"
+                echo "-----------------------------------"
+
+                # npm 패키지 설치 (production only)
+                npm ci --production
+
+                # 이전 버전 백업
+                if [ -L ${deployPath}/current ]; then
+                    rm ${deployPath}/previous 2>/dev/null || true
+                    mv ${deployPath}/current ${deployPath}/previous
+                fi
+
+                # 심볼릭 링크 업데이트
+                ln -sfn ${deployPath}/releases/${BUILD_NUMBER} ${deployPath}/current
+
+                # PM2로 애플리케이션 재시작
+                cd ${deployPath}/current
+                pm2 reload ecosystem.config.js --env ${environment}
+
+                # 오래된 릴리즈 정리 (최근 5개만 유지)
+                cd ${deployPath}/releases
+                ls -t | tail -n +6 | xargs -I {} rm -rf {}
+
+                echo "Deployment to ${environment} completed!"
+ENDSSH
+        """
+    }
+}
