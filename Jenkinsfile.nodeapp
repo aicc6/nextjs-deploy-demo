@@ -131,12 +131,12 @@ pipeline {
                         # 배포 패키지 생성 (필요한 파일만 압축)
                         # tar -czf: c(생성) z(gzip 압축) f(파일명 지정)
                         tar -czf ${APP_NAME}.tar.gz \
-                            .next \                    # Next.js 빌드 결과물
-                            public \                   # 정적 파일들 (이미지, 폰트 등)
-                            package.json \             # 프로젝트 메타데이터와 의존성 목록
-                            package-lock.json \        # 정확한 의존성 버전 정보
-                            ecosystem.config.js \      # PM2 설정 파일
-                            scripts/                    # 헬스 체크 등 유틸리티 스크립트
+                            .next \
+                            public \
+                            package.json \
+                            package-lock.json \
+                            ecosystem.config.js \
+                            scripts/
 
                         echo "Deployment package created"
                     '''
@@ -306,12 +306,12 @@ EOF
 
                 # PM2 홈 디렉토리 설정 (로그 폴더 권한 문제 해결)
                 export PM2_HOME="\$HOME/.pm2"  # 사용자 홈에 PM2 데이터 저장
-                
+
                 # PM2로 애플리케이션 실행/재시작
                 # reload: 무중단 재시작 (실행 중이면) || start: 새로 시작 (실행 중이 아니면)
                 # --env: ecosystem.config.js의 환경 설정 사용
                 pm2 reload ecosystem.config.js --env ${environment} || pm2 start ecosystem.config.js --env ${environment}
-                
+
                 # PM2 상태 확인
                 pm2 list  # 실행 중인 프로세스 목록 표시
                 # 최근 5줄의 로그 출력 (스트리밍 없이)
