@@ -14,9 +14,7 @@ pipeline {
         // Jenkins Credentials에서 관리할 환경 변수들
         NODE_ENV = 'production'
 
-        // 배포 서버 정보
-        DEPLOY_SERVER = credentials('deploy-server-host')
-        DEPLOY_USER = credentials('deploy-server-user')
+        // 배포 경로 정보
         DEPLOY_PATH = '/var/www/nextjs-deploy-demo'
         APP_NAME = 'nextjs-deploy-demo'
         APP_PORT = '9000'
@@ -167,21 +165,26 @@ pipeline {
 }
 
 def deployToServer(String environment) {
-    def deployServer = "${DEPLOY_SERVER}"
     def deployPath = "${DEPLOY_PATH}"
 
-    sshagent(credentials: ['aicc']) {
-        sh """
-            echo "Deploying to ${environment} server..."
+    withCredentials([
+        string(credentialsId: 'deploy-server-host', variable: 'DEPLOY_SERVER'),
+        string(credentialsId: 'deploy-server-user', variable: 'DEPLOY_USER')
+    ]) {
+        sshagent(credentials: ['aicc']) {
+            sh """
+                echo "Deploying to ${environment} server..."
+                echo "Server: \${DEPLOY_SERVER}"
+                echo "User: \${DEPLOY_USER}"
 
-            # 배포 디렉토리 생성
-            ssh ${DEPLOY_USER}@${deployServer} "mkdir -p ${deployPath}/releases/${BUILD_NUMBER}"
+                # 배포 디렉토리 생성
+                ssh \${DEPLOY_USER}@\${DEPLOY_SERVER} "mkdir -p ${deployPath}/releases/${BUILD_NUMBER}"
 
-            # 파일 전송
-            scp ${APP_NAME}.tar.gz ${DEPLOY_USER}@${deployServer}:${deployPath}/releases/${BUILD_NUMBER}/
+                # 파일 전송
+                scp ${APP_NAME}.tar.gz \${DEPLOY_USER}@\${DEPLOY_SERVER}:${deployPath}/releases/${BUILD_NUMBER}/
 
-            # 원격 서버에서 배포 스크립트 실행
-            ssh ${DEPLOY_USER}@${deployServer} << 'ENDSSH'
+                # 원격 서버에서 배포 스크립트 실행
+                ssh \${DEPLOY_USER}@\${DEPLOY_SERVER} << 'ENDSSH'
                 set -e
 
                 cd ${deployPath}/releases/${BUILD_NUMBER}
@@ -220,8 +223,9 @@ EOF
                 cd ${deployPath}/releases
                 ls -t | tail -n +6 | xargs -I {} rm -rf {}
 
-                echo "Deployment to ${environment} completed!"
+                    echo "Deployment to ${environment} completed!"
 ENDSSH
-        """
+            """
+        }
     }
 }
