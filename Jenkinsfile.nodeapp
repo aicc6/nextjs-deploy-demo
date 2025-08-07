@@ -41,16 +41,22 @@ pipeline {
                         
                         # Clean previous installations
                         echo "Cleaning previous installations..."
-                        rm -rf node_modules .next package-lock.json
+                        rm -rf node_modules .next
                         
-                        # Fresh install all dependencies
-                        echo "Installing dependencies..."
-                        npm install --no-audit
+                        # Install all dependencies including devDependencies
+                        # Use --include=dev to force installation of devDependencies even in production
+                        echo "Installing dependencies (including devDependencies)..."
+                        npm ci --include=dev
                         
                         # Verify TypeScript installation
-                        echo "Checking TypeScript installation..."
-                        ls -la node_modules/.bin/ | grep tsc || echo "TypeScript not found in node_modules/.bin/"
-                        npx tsc --version || echo "TypeScript version check failed"
+                        echo "Verifying TypeScript installation..."
+                        if [ -f "node_modules/.bin/tsc" ]; then
+                            echo "TypeScript is installed"
+                            ./node_modules/.bin/tsc --version
+                        else
+                            echo "ERROR: TypeScript not found after installation"
+                            exit 1
+                        fi
                     '''
                 }
             }
@@ -67,14 +73,8 @@ pipeline {
                     steps {
                         sh '''
                             echo "Running TypeScript type check..."
-                            # Make sure TypeScript is available
-                            if [ -f "node_modules/.bin/tsc" ]; then
-                                echo "TypeScript found, running type check..."
-                                ./node_modules/.bin/tsc --noEmit
-                            else
-                                echo "TypeScript not found, attempting to run with npx..."
-                                npx tsc --noEmit
-                            fi
+                            # Use the installed TypeScript directly
+                            ./node_modules/.bin/tsc --noEmit
                         '''
                     }
                 }
