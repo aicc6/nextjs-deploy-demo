@@ -134,19 +134,18 @@ pipeline {
         }
 
         stage('Deploy to Production') {
-            when {
-                anyOf {
-                    branch 'main'
-                    branch 'origin/main'
-                    branch '*/main'
-                }
-            }
             steps {
                 script {
                     echo "Current branch: ${env.BRANCH_NAME}"
                     echo "GIT_BRANCH: ${env.GIT_BRANCH}"
-                    echo "Deploying to production automatically..."
-                    deployToServer('production')
+                    
+                    // 브랜치 확인을 스크립트 내에서 수행
+                    if (env.GIT_BRANCH == 'origin/main' || env.GIT_BRANCH == 'main' || env.GIT_BRANCH?.endsWith('/main')) {
+                        echo "Deploying to production automatically..."
+                        deployToServer('production')
+                    } else {
+                        echo "Skipping deployment - not on main branch (current: ${env.GIT_BRANCH})"
+                    }
                 }
             }
         }
