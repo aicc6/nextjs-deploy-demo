@@ -157,7 +157,9 @@ pipeline {
             // slackSend(color: 'danger', message: "Deployment failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}")
         }
         cleanup {
-            cleanWs()
+            node {
+                cleanWs()
+            }
         }
     }
 }
