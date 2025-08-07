@@ -135,10 +135,16 @@ pipeline {
 
         stage('Deploy to Production') {
             when {
-                branch 'main'
+                anyOf {
+                    branch 'main'
+                    branch 'origin/main'
+                    branch '*/main'
+                }
             }
             steps {
                 script {
+                    echo "Current branch: ${env.BRANCH_NAME}"
+                    echo "GIT_BRANCH: ${env.GIT_BRANCH}"
                     echo "Deploying to production automatically..."
                     deployToServer('production')
                 }
