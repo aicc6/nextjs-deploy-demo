@@ -37,7 +37,8 @@ pipeline {
                     sh '''
                         echo "Node version: $(node -v)"
                         echo "NPM version: $(npm -v)"
-                        npm ci --prefer-offline --no-audit
+                        # Install all dependencies including devDependencies for build process
+                        npm ci --no-audit
                     '''
                 }
             }
@@ -52,7 +53,11 @@ pipeline {
                 }
                 stage('Type Check') {
                     steps {
-                        sh 'npx tsc --noEmit'
+                        sh '''
+                            # TypeScript is installed as devDependency
+                            # Run type check
+                            npx --no-install tsc --noEmit
+                        '''
                     }
                 }
             }
@@ -198,7 +203,7 @@ EOF
                 echo "-----------------------------------"
 
                 # npm 패키지 설치 (production only)
-                npm ci --production
+                npm ci --production --no-audit
 
                 # 이전 버전 백업
                 if [ -L ${deployPath}/current ]; then
