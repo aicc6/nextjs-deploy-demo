@@ -8,7 +8,7 @@ pipeline {
 
     environment {
         // Jenkins Credentials에서 관리할 환경 변수들
-        NODE_ENV = credentials('node-env')
+        NODE_ENV = 'production'
 
         // 배포 서버 정보
         DEPLOY_SERVER = credentials('deploy-server-host')
