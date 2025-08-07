@@ -137,12 +137,9 @@ pipeline {
             when {
                 branch 'main'
             }
-            input {
-                message "Deploy to production?"
-                ok "Yes, deploy to production"
-            }
             steps {
                 script {
+                    echo "Deploying to production automatically..."
                     deployToServer('production')
                 }
             }
