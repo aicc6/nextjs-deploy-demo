@@ -38,16 +38,16 @@ pipeline {
                         echo "Node version: $(node -v)"
                         echo "NPM version: $(npm -v)"
                         echo "Current NODE_ENV: $NODE_ENV"
-                        
+
                         # Clean previous installations
                         echo "Cleaning previous installations..."
                         rm -rf node_modules .next
-                        
+
                         # Install all dependencies including devDependencies
                         # Use --include=dev to force installation of devDependencies even in production
                         echo "Installing dependencies (including devDependencies)..."
                         npm ci --include=dev
-                        
+
                         # Verify TypeScript installation
                         echo "Verifying TypeScript installation..."
                         if [ -f "node_modules/.bin/tsc" ]; then
@@ -88,10 +88,10 @@ pipeline {
                         echo "Building Next.js application..."
                         # Clean any previous build artifacts
                         rm -rf .next
-                        
+
                         # Build the application
                         NODE_ENV=production npm run build
-                        
+
                         echo "Build completed successfully"
                     '''
                 }
@@ -125,7 +125,6 @@ pipeline {
                             package.json \
                             package-lock.json \
                             ecosystem.config.js \
-                            .env.production.template \
                             scripts/
 
                         echo "Deployment package created"
