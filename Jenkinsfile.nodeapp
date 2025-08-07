@@ -12,7 +12,8 @@ pipeline {
 
     environment {
         // Jenkins Credentials에서 관리할 환경 변수들
-        NODE_ENV = 'production'
+        // Build 시에는 development로 설정, 배포 시에만 production 사용
+        NODE_ENV = 'development'
 
         // 배포 서버 정보
         DEPLOY_SERVER = credentials('deploy-server-host')
@@ -37,8 +38,17 @@ pipeline {
                     sh '''
                         echo "Node version: $(node -v)"
                         echo "NPM version: $(npm -v)"
-                        # Install all dependencies including devDependencies for build process
+                        echo "Current NODE_ENV: $NODE_ENV"
+                        
+                        # Ensure we install all dependencies including devDependencies
+                        # Temporarily unset NODE_ENV to avoid production mode
+                        unset NODE_ENV
                         npm ci --no-audit
+                        
+                        # Verify TypeScript installation
+                        echo "Checking TypeScript installation..."
+                        ls -la node_modules/.bin/ | grep tsc || echo "TypeScript not found in node_modules/.bin/"
+                        npx tsc --version || echo "TypeScript version check failed"
                     '''
                 }
             }
@@ -54,9 +64,15 @@ pipeline {
                 stage('Type Check') {
                     steps {
                         sh '''
-                            # TypeScript is installed as devDependency
-                            # Run type check
-                            npx --no-install tsc --noEmit
+                            echo "Running TypeScript type check..."
+                            # Make sure TypeScript is available
+                            if [ -f "node_modules/.bin/tsc" ]; then
+                                echo "TypeScript found, running type check..."
+                                ./node_modules/.bin/tsc --noEmit
+                            else
+                                echo "TypeScript not found, attempting to run with npx..."
+                                npx tsc --noEmit
+                            fi
                         '''
                     }
                 }
@@ -194,12 +210,12 @@ def deployToServer(String environment) {
 
                 # 환경 변수 파일 생성 (Jenkins 크레덴셜 활용)
                 cat > .env.production << EOF
-NODE_ENV=${NODE_ENV}
+NODE_ENV=production
 EOF
 
                 echo "Environment variables configured:"
                 echo "-----------------------------------"
-                echo "NODE_ENV=${NODE_ENV}"
+                echo "NODE_ENV=production"
                 echo "-----------------------------------"
 
                 # npm 패키지 설치 (production only)
