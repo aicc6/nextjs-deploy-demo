@@ -1,0 +1,334 @@
+pipeline {
+    agent any
+
+    // 파라미터 정의 (수동 빌드 시 브랜치 선택 가능)
+    parameters {
+        choice(
+            name: 'BRANCH_TO_BUILD',
+            choices: ['develop', 'main', 'release/latest'],
+            description: '빌드할 브랜치를 선택하세요 (GitHub Webhook에서는 자동 감지)'
+        )
+    }
+
+    // 빌드 트리거 설정
+    triggers {
+        githubPush()
+    }
+
+    // Jenkins Global Tool Configuration에서 설정한 도구들
+    tools {
+        nodejs 'node-v20.19.4'
+    }
+
+    // 환경 변수 설정
+    environment {
+        // Git Repository 설정 (Public Repository)
+        GIT_REPOSITORY_URL = 'https://github.com/aicc6/nextjs-deploy-demo.git'
+
+        // Docker Registry 설정
+        DOCKER_REGISTRY = "${env.CUSTOM_DOCKER_REGISTRY ?: 'nexus-docker.aicc-project.com'}"
+        DOCKER_CREDENTIALS = "${env.CUSTOM_DOCKER_CREDENTIALS ?: 'nexus-docker-credentials'}"
+        DOCKER_IMAGE = 'aicc/nextjs-deploy-demo'
+        CONTAINER_NAME = 'nextjs-deploy-demo'
+
+        // Node.js 실행 환경 설정
+        NODE_ENV = 'production'
+    }
+
+    // 빌드 옵션
+    options {
+        buildDiscarder(logRotator(
+            numToKeepStr: '10',
+            daysToKeepStr: '30'
+        ))
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    stages {
+        // 1. 소스 코드 체크아웃 및 환경 설정
+        stage('🔄 Clone Repository & Setup') {
+            steps {
+                script {
+                    // 브랜치 정보 확인
+                    def branchName = params.BRANCH_TO_BUILD ?: env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'develop'
+
+                    if (branchName?.startsWith('refs/heads/')) {
+                        branchName = branchName.replace('refs/heads/', '')
+                    }
+                    if (branchName?.startsWith('origin/')) {
+                        branchName = branchName.replace('origin/', '')
+                    }
+
+                    echo "🔍 체크아웃할 브랜치: ${branchName}"
+
+                    // Git 체크아웃
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${branchName}"]],
+                        userRemoteConfigs: [[
+                            url: "${env.GIT_REPOSITORY_URL}",
+                            credentialsId: ''
+                        ]],
+                        extensions: [
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'CloneOption', depth: 1, shallow: true]
+                        ]
+                    ])
+
+                    echo "✅ Git 체크아웃 완료: ${branchName}"
+                }
+
+                script {
+                    echo "🚀 Next.js Deploy Demo 빌드 시작"
+                    echo "📋 브랜치: ${env.GIT_BRANCH}"
+                    echo "🔖 커밋: ${env.GIT_COMMIT}"
+
+                    // Git 정보 가져오기
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                }
+
+                // 환경별 .env 파일 생성
+                script {
+                    def currentBranch = env.GIT_BRANCH ?: 'develop'
+                    def envType = currentBranch.contains('main') ? 'production' : 'development'
+
+                    echo "🔧 환경 설정: ${envType}"
+
+                    // 기본 환경 변수 파일 생성
+                    sh """
+                        echo "📄 환경 변수 파일 생성 중"
+                        echo "NODE_ENV=${envType}" > .env.${envType}
+                        echo "NEXT_PUBLIC_APP_ENV=${envType}" >> .env.${envType}
+                        chmod 644 .env.${envType}
+                        echo "✅ 환경 변수 파일 생성 완료"
+                    """
+                }
+            }
+        }
+
+        // 2. 환경 설정 확인
+        stage('🔧 Environment Setup') {
+            steps {
+                sh '''
+                    echo "📦 Node.js 버전 확인"
+                    node --version
+                    npm --version
+
+                    echo "🐳 Docker 버전 확인"
+                    docker --version
+                '''
+            }
+        }
+
+        // 3. 의존성 설치
+        stage('📦 Install Dependencies') {
+            steps {
+                sh '''
+                    echo "📦 의존성 설치 시작"
+                    rm -rf node_modules .next
+
+                    npm ci --include=dev --no-audit --no-fund --prefer-offline --progress=false
+
+                    # 설치 확인
+                    echo "✅ 의존성 설치 완료"
+                    echo "📋 Next.js 확인:"
+                    ls -la node_modules/.bin/next || echo "Next.js 바이너리 확인 실패"
+                    echo "📋 TypeScript 확인:"
+                    ls -la node_modules/.bin/tsc || echo "TypeScript 바이너리 확인 실패"
+                '''
+            }
+        }
+
+        // 4. 코드 품질 검사
+        stage('🔍 Code Quality') {
+            steps {
+                script {
+                    echo "🔍 코드 품질 검사 시작"
+
+                    def lintResult = sh(
+                        script: '''
+                            echo "📝 ESLint 실행"
+                            npm run lint || true
+                        ''',
+                        returnStatus: true
+                    )
+
+                    if (lintResult != 0) {
+                        echo "⚠️ ESLint에서 경고 발견 (배포는 계속 진행)"
+                        currentBuild.result = 'UNSTABLE'
+                    } else {
+                        echo "✅ 코드 품질 검사 통과"
+                    }
+                }
+            }
+        }
+
+        // 5. 애플리케이션 빌드
+        stage('🏗️ Build Application') {
+            steps {
+                sh '''
+                    echo "🏗️ Next.js 애플리케이션 빌드 시작"
+                    npm run build
+
+                    echo "✅ 빌드 완료"
+                    echo "📦 빌드 결과:"
+                    ls -la .next/
+                '''
+            }
+        }
+
+        // 6. Docker 이미지 빌드
+        stage('🐳 Build Docker Image') {
+            steps {
+                script {
+                    echo "🐳 Docker 이미지 빌드 시작"
+
+                    try {
+                        def app = docker.build("${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}")
+                        env.DOCKER_BUILD_SUCCESS = 'true'
+
+                        echo "✅ Docker 이미지 빌드 성공"
+                        echo "📦 이미지: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                    } catch (Exception e) {
+                        env.DOCKER_BUILD_SUCCESS = 'false'
+                        error "Docker 빌드 실패: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        // 7. Docker 이미지 푸시
+        stage('📤 Push Docker Image') {
+            when {
+                environment name: 'DOCKER_BUILD_SUCCESS', value: 'true'
+            }
+            steps {
+                script {
+                    try {
+                        docker.withRegistry("https://${DOCKER_REGISTRY}", "${DOCKER_CREDENTIALS}") {
+                            def app = docker.image("${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}")
+                            app.push("${BUILD_NUMBER}")
+
+                            // main 브랜치는 latest 태그도 푸시
+                            def currentBranch = env.GIT_BRANCH ?: 'develop'
+                            if (currentBranch.contains('main')) {
+                                app.push("latest")
+                                echo "✅ latest 태그 푸시 완료"
+                            }
+                        }
+
+                        env.DOCKER_PUSH_SUCCESS = 'true'
+                        echo "✅ Docker 이미지 푸시 성공: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                    } catch (Exception e) {
+                        error "Docker 푸시 실패: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        // 8. Docker 컨테이너 배포
+        stage('🚀 Deploy') {
+            when {
+                environment name: 'DOCKER_PUSH_SUCCESS', value: 'true'
+            }
+            steps {
+                script {
+                    def currentBranch = env.GIT_BRANCH ?: 'develop'
+                    def deployEnv = currentBranch.contains('main') ? 'production' : 'development'
+                    def containerName = "${CONTAINER_NAME}-${deployEnv}"
+                    def containerPort = deployEnv == 'production' ? '3000' : '3001'
+
+                    echo "🚀 배포 시작: ${deployEnv} 환경"
+                    echo "📦 컨테이너: ${containerName}"
+                    echo "🔌 포트: ${containerPort}"
+                    echo "📦 이미지: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}"
+
+                    sh """
+                        # 새 이미지 다운로드
+                        docker pull ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
+
+                        # 기존 컨테이너 중지 및 삭제
+                        docker stop ${containerName} || true
+                        docker rm ${containerName} || true
+
+                        # 새 컨테이너 실행
+                        docker run -d \\
+                            --name ${containerName} \\
+                            -p ${containerPort}:3000 \\
+                            --restart unless-stopped \\
+                            --env NODE_ENV=${deployEnv} \\
+                            --env DOCKER_IMAGE_TAG=${BUILD_NUMBER} \\
+                            --label "app=nextjs-deploy-demo" \\
+                            --label "env=${deployEnv}" \\
+                            --label "version=${BUILD_NUMBER}" \\
+                            ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
+
+                        # 컨테이너 상태 확인
+                        sleep 5
+                        docker ps | grep ${containerName}
+                        echo "✅ 컨테이너 ${containerName} 배포 완료"
+                    """
+
+                    // 배포 후 헬스 체크
+                    sh """
+                        echo "🔍 헬스 체크 시작"
+                        sleep 10
+                        for i in {1..10}; do
+                            if curl -f http://localhost:${containerPort} > /dev/null 2>&1; then
+                                echo "✅ 애플리케이션이 정상적으로 실행 중입니다"
+                                break
+                            else
+                                echo "⏳ 대기 중... (${i}/10)"
+                                sleep 3
+                            fi
+                        done
+                    """
+                }
+            }
+        }
+    }
+
+    // 빌드 후 작업
+    post {
+        always {
+            echo "📋 빌드 후 정리 작업"
+
+            script {
+                try {
+                    sh 'docker system prune -f'
+                } catch (Exception e) {
+                    echo "Docker 정리 실패: ${e.getMessage()}"
+                }
+            }
+
+            cleanWs()
+        }
+
+        success {
+            echo '✅ 파이프라인 완료!'
+            echo "🌐 애플리케이션 접속: http://localhost:${env.GIT_BRANCH?.contains('main') ? '3000' : '3001'}"
+        }
+
+        failure {
+            echo '❌ 파이프라인 실패!'
+
+            script {
+                // 실패 시 디버깅 정보 출력
+                sh '''
+                    echo "🔍 디버깅 정보:"
+                    docker ps -a | grep nextjs-deploy-demo || echo "관련 컨테이너 없음"
+                    docker images | grep nextjs-deploy-demo || echo "관련 이미지 없음"
+                '''
+            }
+        }
+
+        unstable {
+            echo '⚠️ 파이프라인 불안정 (코드 품질 경고)'
+        }
+    }
+}
