@@ -225,6 +225,10 @@ pipeline {
                         env.DOCKER_PUSH_SUCCESS = 'true'
                         echo "✅ Docker 이미지 푸시 성공: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}"
                     } catch (Exception e) {
+                        env.DOCKER_PUSH_SUCCESS = 'false'
+                        echo "❌ Docker Registry 인증 또는 푸시 실패: ${e.getMessage()}"
+                        echo "🔍 Docker Registry: ${DOCKER_REGISTRY}"
+                        echo "🔍 Credentials ID: ${DOCKER_CREDENTIALS}"
                         error "Docker 푸시 실패: ${e.getMessage()}"
                     }
                 }
@@ -249,44 +253,62 @@ pipeline {
                     echo "🔌 포트: ${containerPort}"
                     echo "📦 이미지: ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}"
 
-                    sh """
-                        # 새 이미지 다운로드
-                        docker pull ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
+                    try {
+                        // Docker Registry 인증을 통한 이미지 pull 및 배포
+                        docker.withRegistry("https://${DOCKER_REGISTRY}", "${DOCKER_CREDENTIALS}") {
+                            sh """
+                                # 새 이미지 다운로드 (인증된 세션에서)
+                                docker pull ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
+                            """
+                        }
 
-                        # 기존 컨테이너 중지 및 삭제
-                        docker stop ${containerName} || true
-                        docker rm ${containerName} || true
+                        sh """
+                            # 기존 컨테이너 중지 및 삭제
+                            docker stop ${containerName} || true
+                            docker rm ${containerName} || true
 
-                        # 새 컨테이너 실행
-                        docker run -d \\
-                            --name ${containerName} \\
-                            --network ${dockerNetwork} \\
-                            --restart unless-stopped \\
-                            --label "app=nextjs-deploy-demo" \\
-                            --label "env=${deployEnv}" \\
-                            --label "version=${BUILD_NUMBER}" \\
-                            ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
+                            # 새 컨테이너 실행
+                            docker run -d \\
+                                --name ${containerName} \\
+                                --network ${dockerNetwork} \\
+                                --restart unless-stopped \\
+                                --label "app=nextjs-deploy-demo" \\
+                                --label "env=${deployEnv}" \\
+                                --label "version=${BUILD_NUMBER}" \\
+                                ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
 
-                        # 컨테이너 상태 확인
-                        sleep 5
-                        docker ps | grep ${containerName}
-                        echo "✅ 컨테이너 ${containerName} 배포 완료"
-                    """
+                            # 컨테이너 상태 확인
+                            sleep 5
+                            docker ps | grep ${containerName}
+                            echo "✅ 컨테이너 ${containerName} 배포 완료"
+                        """
+
+                        env.DEPLOY_SUCCESS = 'true'
+                    } catch (Exception e) {
+                        env.DEPLOY_SUCCESS = 'false'
+                        echo "❌ 배포 실패: ${e.getMessage()}"
+                        echo "🔍 Docker Registry 인증 확인 필요"
+                        echo "🔍 Registry: ${DOCKER_REGISTRY}"
+                        echo "🔍 Credentials: ${DOCKER_CREDENTIALS}"
+                        error "배포 실패: ${e.getMessage()}"
+                    }
 
                     // 배포 후 헬스 체크
-                    sh """
-                        echo "🔍 헬스 체크 시작"
-                        sleep 10
-                        for i in {1..10}; do
-                            if curl -f http://localhost:${containerPort} > /dev/null 2>&1; then
-                                echo "✅ 애플리케이션이 정상적으로 실행 중입니다"
-                                break
-                            else
-                                echo "⏳ 대기 중... (${i}/10)"
-                                sleep 3
-                            fi
-                        done
-                    """
+                    if (env.DEPLOY_SUCCESS == 'true') {
+                        sh """
+                            echo "🔍 헬스 체크 시작"
+                            sleep 10
+                            for i in {1..10}; do
+                                if curl -f http://localhost:${containerPort} > /dev/null 2>&1; then
+                                    echo "✅ 애플리케이션이 정상적으로 실행 중입니다"
+                                    break
+                                else
+                                    echo "⏳ 대기 중... (${i}/10)"
+                                    sleep 3
+                                fi
+                            done
+                        """
+                    }
                 }
             }
         }
