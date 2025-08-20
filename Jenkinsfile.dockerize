@@ -242,6 +242,7 @@ pipeline {
                     def deployEnv = currentBranch.contains('main') ? 'production' : 'development'
                     def containerName = "${CONTAINER_NAME}-${deployEnv}"
                     def containerPort = deployEnv == 'production' ? '3000' : '3001'
+                    def dockerNetwork = 'demo-net'
 
                     echo "🚀 배포 시작: ${deployEnv} 환경"
                     echo "📦 컨테이너: ${containerName}"
@@ -259,10 +260,8 @@ pipeline {
                         # 새 컨테이너 실행
                         docker run -d \\
                             --name ${containerName} \\
-                            -p ${containerPort}:3000 \\
+                            --network ${dockerNetwork} \\
                             --restart unless-stopped \\
-                            --env NODE_ENV=${deployEnv} \\
-                            --env DOCKER_IMAGE_TAG=${BUILD_NUMBER} \\
                             --label "app=nextjs-deploy-demo" \\
                             --label "env=${deployEnv}" \\
                             --label "version=${BUILD_NUMBER}" \\
