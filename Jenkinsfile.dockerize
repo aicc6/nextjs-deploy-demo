@@ -130,14 +130,14 @@ pipeline {
                     ).trim()
 
                     // 브랜치 존재 확인
-                    sh """
+                    sh '''
                         echo "🔍 Git 상태 확인:"
                         git status
                         echo "🔍 현재 브랜치:"
                         git branch -a
                         echo "🔍 최근 커밋:"
                         git log --oneline -5
-                    """
+                    '''
                 }
 
                 // 환경별 .env 파일 생성
@@ -148,18 +148,18 @@ pipeline {
                     echo "🔧 환경 설정: ${envType}"
 
                     // 기본 환경 변수 파일 생성
-                    sh """
+                    sh '''
                         echo "📄 환경 변수 파일 생성 중"
-                        echo "NODE_ENV=${envType}" > .env.${envType}
-                        echo "NEXT_PUBLIC_APP_ENV=${envType}" >> .env.${envType}
-                        echo "NEXT_PUBLIC_BUILD_TIME=\$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .env.${envType}
-                        echo "NEXT_PUBLIC_GIT_COMMIT=${env.GIT_COMMIT_SHORT}" >> .env.${envType}
-                        echo "NEXT_PUBLIC_BUILD_NUMBER=${BUILD_NUMBER}" >> .env.${envType}
-                        chmod 644 .env.${envType}
+                        echo "NODE_ENV=''' + envType + '''" > .env.''' + envType + '''
+                        echo "NEXT_PUBLIC_APP_ENV=''' + envType + '''" >> .env.''' + envType + '''
+                        echo "NEXT_PUBLIC_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .env.''' + envType + '''
+                        echo "NEXT_PUBLIC_GIT_COMMIT=''' + env.GIT_COMMIT_SHORT + '''" >> .env.''' + envType + '''
+                        echo "NEXT_PUBLIC_BUILD_NUMBER=''' + BUILD_NUMBER + '''" >> .env.''' + envType + '''
+                        chmod 644 .env.''' + envType + '''
                         echo "✅ 환경 변수 파일 생성 완료"
                         echo "📋 환경 변수 파일 내용:"
-                        cat .env.${envType}
-                    """
+                        cat .env.''' + envType + '''
+                    '''
                 }
             }
         }
@@ -309,34 +309,34 @@ pipeline {
                     try {
                         // Docker Registry 인증을 통한 이미지 pull 및 배포
                         docker.withRegistry("https://${DOCKER_REGISTRY}", "${DOCKER_CREDENTIALS}") {
-                            sh """
+                            sh '''
                                 # 새 이미지 다운로드 (인증된 세션에서)
-                                docker pull ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
-                            """
+                                docker pull ''' + "${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}" + '''
+                            '''
                         }
 
-                        sh """
+                        sh '''
                             # 기존 컨테이너 중지 및 삭제
-                            docker stop ${containerName} || true
-                            docker rm ${containerName} || true
+                            docker stop ''' + containerName + ''' || true
+                            docker rm ''' + containerName + ''' || true
 
                             # 새 컨테이너 실행
                             docker run -d \\
-                                --name ${containerName} \\
-                                --network ${dockerNetwork} \\
+                                --name ''' + containerName + ''' \\
+                                --network ''' + dockerNetwork + ''' \\
                                 --restart unless-stopped \\
                                 --label "app=nextjs-deploy-demo" \\
-                                --label "env=${deployEnv}" \\
-                                --label "version=${BUILD_NUMBER}" \\
-                                --label "branch=${currentBranch}" \\
-                                --label "commit=${env.GIT_COMMIT_SHORT}" \\
-                                ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
+                                --label "env=''' + deployEnv + '''" \\
+                                --label "version=''' + BUILD_NUMBER + '''" \\
+                                --label "branch=''' + currentBranch + '''" \\
+                                --label "commit=''' + env.GIT_COMMIT_SHORT + '''" \\
+                                ''' + "${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}" + '''
 
                             # 컨테이너 상태 확인
                             sleep 5
-                            docker ps | grep ${containerName}
-                            echo "✅ 컨테이너 ${containerName} 배포 완료"
-                        """
+                            docker ps | grep ''' + containerName + '''
+                            echo "✅ 컨테이너 ''' + containerName + ''' 배포 완료"
+                        '''
 
                         env.DEPLOY_SUCCESS = 'true'
                     } catch (Exception e) {
@@ -350,19 +350,19 @@ pipeline {
 
                     // 배포 후 헬스 체크
                     if (env.DEPLOY_SUCCESS == 'true') {
-                        sh """
+                        sh '''
                             echo "🔍 헬스 체크 시작"
                             sleep 10
-                            for i in {1..10}; do
-                                if curl -f http://localhost:${containerPort} > /dev/null 2>&1; then
+                            for i in $(seq 1 10); do
+                                if curl -f http://localhost:''' + containerPort + ''' > /dev/null 2>&1; then
                                     echo "✅ 애플리케이션이 정상적으로 실행 중입니다"
                                     break
                                 else
-                                    echo "⏳ 대기 중... (${i}/10)"
+                                    echo "⏳ 대기 중... ($i/10)"
                                     sleep 3
                                 fi
                             done
-                        """
+                        '''
                     }
                 }
             }
