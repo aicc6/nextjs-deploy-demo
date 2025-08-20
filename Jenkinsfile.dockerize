@@ -37,8 +37,8 @@ pipeline {
         DEFAULT_BRANCH = 'main'
 
         // Docker Registry 설정
-        DOCKER_REGISTRY = "${env.CUSTOM_DOCKER_REGISTRY ?: 'nexus-docker.aicc-project.com'}"
-        DOCKER_CREDENTIALS = "${env.CUSTOM_DOCKER_CREDENTIALS ?: 'nexus-docker-credentials'}"
+        DOCKER_REGISTRY = "${env.CUSTOM_DOCKER_REGISTRY}"
+        DOCKER_CREDENTIALS = "${env.CUSTOM_DOCKER_CREDENTIALS}"
         DOCKER_IMAGE = 'aicc/nextjs-deploy-demo'
         CONTAINER_NAME = 'nextjs-deploy-demo'
 
