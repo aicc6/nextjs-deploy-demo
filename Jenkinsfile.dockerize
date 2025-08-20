@@ -5,8 +5,18 @@ pipeline {
     parameters {
         choice(
             name: 'BRANCH_TO_BUILD',
-            choices: ['develop', 'main', 'release/latest'],
+            choices: ['main', 'develop', 'release/latest'],
             description: '빌드할 브랜치를 선택하세요 (GitHub Webhook에서는 자동 감지)'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: '테스트를 건너뛸지 선택하세요'
+        )
+        booleanParam(
+            name: 'FORCE_REBUILD',
+            defaultValue: false,
+            description: '강제로 전체 빌드를 실행할지 선택하세요'
         )
     }
 
@@ -24,6 +34,7 @@ pipeline {
     environment {
         // Git Repository 설정 (Public Repository)
         GIT_REPOSITORY_URL = 'https://github.com/aicc6/nextjs-deploy-demo.git'
+        DEFAULT_BRANCH = 'main'
 
         // Docker Registry 설정
         DOCKER_REGISTRY = "${env.CUSTOM_DOCKER_REGISTRY ?: 'nexus-docker.aicc-project.com'}"
@@ -51,9 +62,10 @@ pipeline {
         stage('🔄 Clone Repository & Setup') {
             steps {
                 script {
-                    // 브랜치 정보 확인
-                    def branchName = params.BRANCH_TO_BUILD ?: env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'develop'
+                    // 브랜치 정보 확인 및 정리
+                    def branchName = params.BRANCH_TO_BUILD ?: env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'main'
 
+                    // 브랜치 이름 정규화
                     if (branchName?.startsWith('refs/heads/')) {
                         branchName = branchName.replace('refs/heads/', '')
                     }
@@ -64,25 +76,51 @@ pipeline {
                     echo "🔍 체크아웃할 브랜치: ${branchName}"
 
                     // Git 체크아웃
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: "*/${branchName}"]],
-                        userRemoteConfigs: [[
-                            url: "${env.GIT_REPOSITORY_URL}",
-                            credentialsId: ''
-                        ]],
-                        extensions: [
-                            [$class: 'CleanBeforeCheckout'],
-                            [$class: 'CloneOption', depth: 1, shallow: true]
-                        ]
-                    ])
+                    try {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "*/${branchName}"]],
+                            userRemoteConfigs: [[
+                                url: "${env.GIT_REPOSITORY_URL}",
+                                credentialsId: '',
+                                name: 'origin'
+                            ]],
+                            extensions: [
+                                [$class: 'CleanBeforeCheckout'],
+                                [$class: 'CloneOption', depth: 0, shallow: false, noTags: false, reference: '', timeout: 20],
+                                [$class: 'CheckoutOption', timeout: 20],
+                                [$class: 'LocalBranch', localBranch: branchName]
+                            ]
+                        ])
+                        echo "✅ Git 체크아웃 완료: ${branchName}"
+                    } catch (Exception e) {
+                        echo "❌ 브랜치 ${branchName} 체크아웃 실패. main 브랜치로 재시도합니다."
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "*/main"]],
+                            userRemoteConfigs: [[
+                                url: "${env.GIT_REPOSITORY_URL}",
+                                credentialsId: '',
+                                name: 'origin'
+                            ]],
+                            extensions: [
+                                [$class: 'CleanBeforeCheckout'],
+                                [$class: 'CloneOption', depth: 0, shallow: false, noTags: false, reference: '', timeout: 20],
+                                [$class: 'CheckoutOption', timeout: 20],
+                                [$class: 'LocalBranch', localBranch: 'main']
+                            ]
+                        ])
+                        echo "✅ main 브랜치로 체크아웃 완료"
+                        branchName = 'main'
+                    }
 
-                    echo "✅ Git 체크아웃 완료: ${branchName}"
+                    // 브랜치 정보를 환경 변수로 설정
+                    env.CURRENT_BRANCH = branchName
                 }
 
                 script {
                     echo "🚀 Next.js Deploy Demo 빌드 시작"
-                    echo "📋 브랜치: ${env.GIT_BRANCH}"
+                    echo "📋 브랜치: ${env.CURRENT_BRANCH}"
                     echo "🔖 커밋: ${env.GIT_COMMIT}"
 
                     // Git 정보 가져오기
@@ -90,11 +128,21 @@ pipeline {
                         script: "git rev-parse --short HEAD",
                         returnStdout: true
                     ).trim()
+
+                    // 브랜치 존재 확인
+                    sh """
+                        echo "🔍 Git 상태 확인:"
+                        git status
+                        echo "🔍 현재 브랜치:"
+                        git branch -a
+                        echo "🔍 최근 커밋:"
+                        git log --oneline -5
+                    """
                 }
 
                 // 환경별 .env 파일 생성
                 script {
-                    def currentBranch = env.GIT_BRANCH ?: 'develop'
+                    def currentBranch = env.CURRENT_BRANCH ?: 'main'
                     def envType = currentBranch.contains('main') ? 'production' : 'development'
 
                     echo "🔧 환경 설정: ${envType}"
@@ -104,8 +152,13 @@ pipeline {
                         echo "📄 환경 변수 파일 생성 중"
                         echo "NODE_ENV=${envType}" > .env.${envType}
                         echo "NEXT_PUBLIC_APP_ENV=${envType}" >> .env.${envType}
+                        echo "NEXT_PUBLIC_BUILD_TIME=\$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> .env.${envType}
+                        echo "NEXT_PUBLIC_GIT_COMMIT=${env.GIT_COMMIT_SHORT}" >> .env.${envType}
+                        echo "NEXT_PUBLIC_BUILD_NUMBER=${BUILD_NUMBER}" >> .env.${envType}
                         chmod 644 .env.${envType}
                         echo "✅ 환경 변수 파일 생성 완료"
+                        echo "📋 환경 변수 파일 내용:"
+                        cat .env.${envType}
                     """
                 }
             }
@@ -242,7 +295,7 @@ pipeline {
             }
             steps {
                 script {
-                    def currentBranch = env.GIT_BRANCH ?: 'develop'
+                    def currentBranch = env.CURRENT_BRANCH ?: 'main'
                     def deployEnv = currentBranch.contains('main') ? 'production' : 'development'
                     def containerName = "${CONTAINER_NAME}-${deployEnv}"
                     def containerPort = deployEnv == 'production' ? '3000' : '3001'
@@ -275,6 +328,8 @@ pipeline {
                                 --label "app=nextjs-deploy-demo" \\
                                 --label "env=${deployEnv}" \\
                                 --label "version=${BUILD_NUMBER}" \\
+                                --label "branch=${currentBranch}" \\
+                                --label "commit=${env.GIT_COMMIT_SHORT}" \\
                                 ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${BUILD_NUMBER}
 
                             # 컨테이너 상태 확인
@@ -332,7 +387,13 @@ pipeline {
 
         success {
             echo '✅ 파이프라인 완료!'
-            echo "🌐 애플리케이션 접속: http://localhost:${env.GIT_BRANCH?.contains('main') ? '3000' : '3001'}"
+            script {
+                def currentBranch = env.CURRENT_BRANCH ?: 'main'
+                def deployEnv = currentBranch.contains('main') ? 'production' : 'development'
+                def containerPort = deployEnv == 'production' ? '3000' : '3001'
+                echo "🌐 애플리케이션 접속: http://localhost:${containerPort}"
+                echo "🔖 빌드 정보: 브랜치=${currentBranch}, 커밋=${env.GIT_COMMIT_SHORT}, 빌드=${BUILD_NUMBER}"
+            }
         }
 
         failure {
